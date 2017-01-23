@@ -1,0 +1,2164 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+
+<!--
+MIT License
+
+Copyright (c) 2017 Adam Bouhenguel
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+-->
+
+<script src="./react@latest/dist/react.js"></script>
+<script src="./react-dom@latest/dist/react-dom.js"></script>
+
+<style>
+  html {
+    font-family: -apple-system, ".SFNSText-Regular", "San Francisco", "Roboto", "Segoe UI", "Helvetica Neue", "Lucida Grande", sans-serif;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+  }
+</style>
+<div id="root"></div>
+
+<script>
+
+// Don't let window-level scrolling interfere with the other actions.
+(function() {
+  var scrollDoneTimeout;
+  window.addEventListener('scroll', function() {
+    document.body.style.pointerEvents = 'none';
+    if (scrollDoneTimeout) {
+      clearTimeout(scrollDoneTimeout);
+      scrollDoneTimeout = undefined;
+    }
+
+    scrollDoneTimeout = setTimeout(function() {
+      document.body.style.pointerEvents = 'auto';
+      scrollDoneTimeout = undefined;
+    }, 500);
+  });
+})();
+
+const e = React.createElement;
+
+class ZoomControl extends React.Component {
+  constructor(props) {
+    super(props);
+
+    this.dragHook = this.mouseMovedDuringDrag.bind(this);
+    this.dragFinishHook = this.finishDrag.bind(this);
+
+    this.state = {
+      value: props.initialValue
+    };
+  }
+
+  setValue(value) {
+    if (value === this.state.value) {
+      return;
+    }
+
+    var t = this;
+    this.setState(
+      {value: value},
+      this.props.onValue ? function() { t.props.onValue(t.state.value); } : null
+    );
+
+  }
+
+  startDrag(e) {
+    this.setState({
+      initialX: e.clientX,
+      initialY: e.clientY,
+      initialValue: this.state.value
+    });
+
+    document.body.addEventListener('mousemove', this.dragHook);
+    document.body.addEventListener('mouseup', this.dragFinishHook);
+  }
+
+  finishDrag() {
+    document.body.removeEventListener('mousemove', this.dragHook);
+    document.body.removeEventListener('mouseup', this.dragFinishHook);
+  }
+
+  mouseMovedDuringDrag(e) {
+    var delta = e.clientX - this.state.initialX;
+    var valueMin = this.props.valueMin;
+    var valueDiameter = (this.props.valueMax - valueMin);
+    var scaledDelta = ((delta / this.props.domainDiameter) * valueDiameter) + valueMin;
+
+    var value = this.state.initialValue + scaledDelta;
+    if (value < valueMin) {
+      value = valueMin;
+    }
+
+    if (value > this.props.valueMax) {
+      value = this.props.valueMax;
+    }
+
+    if (value !== this.state.value) {
+      this.setValue(value);
+    }
+  }
+
+  render() {
+    var t = this;
+    return e(
+      'span',
+      {
+        style: {
+          position: 'relative'
+        }
+      },
+      e(
+        'span',
+        {
+          style: {
+            display: t.state.hovered ? 'block' : 'none',
+            position: 'absolute',
+            fontSize: '80%',
+            left: 1,
+            top: '-1em'
+          }
+        },
+        'drag'
+      ),
+      e(
+        'span',
+        {
+          onMouseDown: function(e) {
+            t.startDrag(e);
+            return e.preventDefault();
+          },
+          onMouseOver: function() {
+            t.setState({hovered: true});
+          },
+          onMouseOut: function() {
+            t.setState({hovered: false});
+          },
+          style: {
+            cursor: 'ew-resize',
+            width: '4ch',
+            display: 'inline-block',
+            paddingBottom: 2,
+            borderBottom: '1px dashed #888'
+          }
+        },
+        `${Math.round(this.state.value * 100)}%`
+      )
+    );
+  }
+}
+
+ZoomControl.defaultProps = {
+  domainDiameter: 50,
+  valueMin: .1,
+  valueMax: 1
+};
+
+class StopwatchGauge extends React.Component {
+  arcElement(thetaA, thetaB, fill) {
+    var thetaSum = thetaA + thetaB;
+    if (thetaB === (2 * Math.PI)) {
+      return e(
+        'circle',
+        {
+          fill: fill,
+          cx: 0,
+          cy: 0,
+          r: 1
+        }
+      );
+    }
+
+    return e(
+      'path',
+      {
+        fill: fill,
+        d: [
+          'M', 0, 0,
+          'L', Math.sin(thetaSum), -Math.cos(thetaSum),
+          'A', 1, 1, 0, (thetaB) > Math.PI ? 1 : 0, 0, Math.sin(thetaA), -Math.cos(thetaA),
+          'L', 0, 0,
+        ].join(' ')
+      }
+    );
+  }
+
+  render() {
+    var p = this.props;
+
+    var theta1 = 2 * Math.PI * p.value1;
+    var theta2 = 2 * Math.PI * (p.value2 || 0);
+
+    var strokeWidth = 0.3;
+    var stroke = p.fill2;
+
+    var topButtonWidth = 1;
+    var topButtonPadding = 0.45;
+    var sideButtonAngle = 2 * Math.PI * (0.15);
+    var sideButtonLength = 0.4;
+
+    var outlineRadius = 1 + (strokeWidth / 2);
+
+    var viewBoxMinX = -(outlineRadius + (strokeWidth/2));
+    var viewBoxWidth = -viewBoxMinX * 2;
+    var viewBoxMinY = -((strokeWidth/2) + topButtonPadding + outlineRadius + (strokeWidth/2));
+    var viewBoxHeight = -viewBoxMinY + outlineRadius + (strokeWidth/2);
+
+    return e(
+      'svg',
+      {
+        xmlns: "http://www.w3.org/svg/2000",
+        style: p.style,
+        // viewBox: `${viewBoxMinX} ${viewBoxMinY} ${viewBoxWidth} ${viewBoxHeight}`,
+        viewBox: `-1.2 -1.8 2.4 3.1`,
+        width: p.width,
+        height: p.height
+      },
+      this.arcElement(0, theta1, p.fill1),
+      this.arcElement(theta1, theta2, p.fill2),
+      e(
+        'path',
+        {
+          strokeWidth: strokeWidth,
+          strokeLinecap: 'round',
+          stroke: stroke,
+          d: [
+            'M', -topButtonWidth/2, -outlineRadius - topButtonPadding,
+            'l', topButtonWidth, 0
+          ].join(' ')
+        }
+      ),
+      e(
+        'path',
+        {
+          strokeWidth: strokeWidth,
+          stroke: stroke,
+          strokeLinecap: 'round',
+          d: [
+            'M', outlineRadius * Math.sin(sideButtonAngle), outlineRadius * -Math.cos(sideButtonAngle),
+            'L',
+                (outlineRadius + sideButtonLength) * Math.sin(sideButtonAngle),
+                (outlineRadius + sideButtonLength) * -Math.cos(sideButtonAngle)
+          ].join(' ')
+        }
+      ),
+      e(
+        'circle',
+        {
+          cx: 0,
+          cy: 0,
+          r: outlineRadius,
+          fill: 'transparent',
+          strokeWidth: strokeWidth,
+          stroke: stroke
+        }
+      )
+    )
+  }
+}
+
+class SnapshotImage extends React.Component {
+  render() {
+    var p = this.props;
+    var t = this;
+    return e(
+      'img',
+      {
+        style: {
+          display: 'block'
+        },
+        draggable: false,
+        width: p.width,
+        height: p.height,
+        src: p.src
+      }
+    );
+  }
+}
+
+class SnapshotHighlight extends React.Component {
+  render() {
+    var p = this.props;
+    return e(
+      'span',
+      {
+        style: {
+          display: 'block',
+          position: 'absolute',
+          boxShadow: '0 0 10px rgba(81, 203, 238, 1)',
+          border: `${p.borderWidth}px solid rgba(81, 203, 238, 1)`,
+          top: p.bounds.top - p.borderWidth,
+          left: p.bounds.left - p.borderWidth,
+          width: p.bounds.width,
+          height: p.bounds.height
+        }
+      }
+    );
+  }
+}
+
+SnapshotHighlight.defaultProps = {
+  borderWidth: 3
+}
+
+class ShadowedBox extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = {};
+  }
+  render() {
+    var t = this;
+
+    var boxShadow = [
+      '0 1px 2px 0 rgba(0,0,0,0.1)'
+    ]
+    if (t.state.hover) {
+      boxShadow.push('0 4px 8px 0 rgba(0,0,0,0.2)');
+    }
+
+    return e(
+      'span',
+      {
+        onMouseOver: function() {
+          t.setState({hover: true});
+        },
+        onMouseMove: function() {
+          if (!t.state.hover) {
+            return;
+          }
+
+          t.setState({hover: true});
+        },
+        onMouseOut: function() {
+          t.setState({hover: false});
+        },
+        style: {
+          borderColor: 'rgba(150,150,150,1)',
+          boxShadow: boxShadow.join(', '),
+          display: 'inline-block'
+        }
+      },
+      this.props.children
+    );
+  }
+}
+
+class SessionSnapshotStatistics extends React.Component {
+  formatBytes(b) {
+    if (b < 1024) {
+      return `${b} B`;
+    }
+
+    b = b / 1024;
+    if (b < 1024) {
+      return `${Math.round(b)} KiB`;
+    }
+
+    b = b / 1024;
+    return `${Math.round(b)} MiB`;
+  }
+
+  render() {
+    var p = this.props;
+
+    var fill1 = '#ddd';
+    var fill2 = '#666';
+    var fontSize = p.zoom * p.width > 100 ? '30px' : '24px';
+
+    var contentSize = 0;
+    p.networkRequests.forEach(function(req) {
+      (req.responseParts || []).forEach(function(res) {
+        contentSize += res.bodySize;
+      });
+    });
+
+    return e(
+      'span',
+      {
+        style: {
+          display: 'inline-block',
+          color: fill2,
+          fontSize: fontSize,
+          lineHeight: 1.4,
+          fontWeight: '100',
+          width: '5ch',
+          verticalAlign: 'top',
+          padding: '0 1ch 0 2ch',
+        }
+      },
+      p.durationMs < 50 ? null :
+          e(
+            'div',
+            {
+              style: {
+                whiteSpace: 'nowrap'
+              }
+            },
+            e(
+              StopwatchGauge,
+              {
+                width: '0.9em',
+                height: '0.9em',
+                style: {
+                  display: 'inline-block',
+                  marginLeft: '-0.1em'
+                },
+                value1: p.elapsedMs / p.totalMs,
+                value2: p.durationMs / p.totalMs,
+                fill1: fill1,
+                fill2: fill2
+              }
+            ),
+            e(
+              'span',
+              null,
+              ` ${Math.round(p.durationMs / 100) / 10}s`
+            )
+          ),
+      e(
+        'div',
+        {
+          style: {
+            whiteSpace: 'nowrap',
+            fontSize: '50%'
+          }
+        },
+        p.networkRequests.length === 0 ? '' :
+            e('div', null, this.formatBytes(contentSize)),
+        p.networkRequests.length === 0 ? '' :
+            e('div', null, `${p.networkRequests.length} reqs`),
+        e('div', null, p.event)
+      )
+    );
+  }
+}
+
+class SessionSnapshot extends React.Component {
+  adjustScrollPane(node) {
+    if (!this.props.highlight) {
+      return;
+    }
+
+    var highlightBounds = this.props.highlight;
+
+    var top = highlightBounds.top;
+    var height = highlightBounds.height;
+    if ((top + height) > node.offsetHeight) {
+      var scrollTop = top + (height/2) - (node.offsetHeight / 2);
+      node.scrollTop = scrollTop;
+    }
+  }
+
+  render() {
+    var t = this;
+    var p = this.props;
+    var zoom = p.zoom;
+    var width = p.width * zoom;
+    var height = p.height * zoom;
+
+    var image = p.image;
+
+    return e(
+      'span',
+      {
+        style: {
+          margin: '4ch 2ch 4ch 0',
+          display: 'inline-block'
+          // whiteSpace: 'nowrap'
+        }
+      },
+      e(SessionSnapshotStatistics, p),
+      e(
+        ShadowedBox,
+        null,
+        e(
+          'span',
+          {
+            key: image,
+            onMouseOver: function() {
+              document.body.style.overflow = 'hidden';
+            },
+            onMouseOut: function() {
+              document.body.style.overflow = 'scroll';
+            },
+            style: {
+              display: 'block',
+              overflow: 'hidden',
+              width: width,
+              height: height
+            }
+          },
+          e(
+            'span',
+            {
+              ref: function(scrollPane) { scrollPane && t.adjustScrollPane(scrollPane); },
+              style: {
+                display: 'inline-block',
+                position: 'relative',
+                overflow: 'scroll',
+                userSelect: 'none',
+                width: p.width,
+                height: p.height,
+                transform: 'scale(' + zoom + ')',
+                transformOrigin: 'top left'
+              }
+            },
+            e(SnapshotImage, {src: image, width: p.imageWidth, height: p.imageHeight}),
+            p.highlight === null ? null : e(SnapshotHighlight, {bounds: p.highlight})
+          )
+        )
+      )
+    );
+  }
+}
+
+class SessionPoster extends React.Component {
+  constructor(props) {
+    super(props);
+
+    this.state = {
+      zoom: props.initialZoom
+    };
+  }
+
+  render() {
+    var t = this;
+    var p = this.props;
+
+    var startTime = Date.parse(p.timestamp);
+    var lastImageIx = p.snapshots.length - 1;
+    var totalTime = Date.parse(p.snapshots[lastImageIx].timestamp) - startTime
+
+    var prevTime = startTime;
+    var snapshotChildren = p.snapshots.map(function(snapshot, index) {
+      var snapshotTime = Date.parse(snapshot.timestamp);
+      var durationMs = snapshotTime - prevTime;
+      var elapsedMs = prevTime - startTime;
+      prevTime = snapshotTime;
+      return e(
+        SessionSnapshot,
+        {
+          key: index,
+          width: p.width,
+          height: p.height,
+          zoom: t.state.zoom,
+          image: snapshot.src,
+          imageWidth: snapshot.width,
+          imageHeight: snapshot.height,
+          highlight: snapshot.node,
+          networkRequests: snapshot.networkRequests,
+          time: snapshotTime,
+          event: snapshot.event,
+          elapsedMs: elapsedMs,
+          durationMs: durationMs,
+          totalMs: totalTime
+        });
+    });
+
+    return e(
+      'div',
+      null,
+      e(
+        'div',
+        {
+          style: {
+            width: '100%',
+            paddingLeft: '4ch',
+            paddingBottom: 10,
+            paddingTop: 10,
+            marginTop: 10,
+            backgroundColor: 'white',
+            position: 'sticky',
+            top: 0,
+            zIndex: 1,
+            boxShadow: '-1px 1px 6px 0 rgba(0,0,0,.12)'
+          }
+        },
+        e('span', null, p.deviceLabel),
+        '\u00a0\u00a0\u00a0',
+        e('span', null, `${p.width}px x ${p.height}px`),
+        '\u00a0\u00a0\u00a0',
+        e(
+          ZoomControl,
+          {
+            initialValue: p.initialZoom,
+            onValue: function(value) { t.setState({zoom: value}); }
+          }
+        )
+      ),
+      e(
+        'div',
+        {
+          style: {
+            backgroundColor: '#f8f8f8',
+            paddingTop: '2em',
+            boxShadow: 'inset -1px -1px 6px 0 rgba(0,0,0,.12)'
+          }
+        },
+        snapshotChildren)
+    );
+  }
+}
+
+class TestAuditPoster extends React.Component {
+  render() {
+    var p = this.props;
+    return e(
+      'div',
+      null,
+      e('div', null, p.label),
+      e('div', null, `${p.file}:${p.line}`),
+      e(
+        'div',
+        null,
+        this.props.sessions.map(function(session, index) {
+          return e(
+            SessionPoster,
+            {
+              key: index,
+              timestamp: p.timestamp,
+              initialZoom: 1,
+              deviceLabel: session.deviceLabel,
+              width: session.width,
+              height: session.height,
+              snapshots: session.snapshots
+            });
+        })
+      )
+    );
+  }
+}
+
+
+class Monitor extends React.Component {
+  constructor(props) {
+    super(props);
+
+    this.state = {
+      zoom: props.initialZoom
+    };
+  }
+
+  render() {
+    var t = this;
+    var p = this.props;
+    var snapshot = p.snapshot;
+
+    return e(
+      'div',
+      {
+        style: {
+          textAlign: 'center',
+        }
+      },
+      e(
+        'div',
+        {
+          style: {
+            width: '100%',
+            paddingLeft: '4ch',
+            paddingBottom: 10,
+            paddingTop: 10,
+            marginTop: 10,
+            backgroundColor: 'white',
+            position: 'sticky',
+            top: 0,
+            zIndex: 1,
+            boxShadow: '-1px 1px 6px 0 rgba(0,0,0,.12)'
+          }
+        },
+        e('span', null, p.deviceLabel),
+        '\u00a0\u00a0\u00a0',
+        e('span', null, `${p.width}px x ${p.height}px`),
+        '\u00a0\u00a0\u00a0',
+        e(
+          ZoomControl,
+          {
+            initialValue: p.initialZoom,
+            onValue: function(value) { t.setState({zoom: value}); }
+          }
+        )
+      ),
+      e(
+        SessionSnapshot,
+        {
+          width: p.width,
+          height: p.height,
+          zoom: t.state.zoom,
+          image: snapshot.src,
+          imageWidth: snapshot.width,
+          imageHeight: snapshot.height,
+          highlight: snapshot.node,
+          networkRequests: snapshot.networkRequests,
+          time: snapshot.time,
+          event: snapshot.event,
+          elapsedMs: snapshot.elapsedMs,
+          durationMs: snapshot.durationMs,
+          totalMs: snapshot.totalTime
+        }
+      )
+    );
+  }
+}
+
+class SessionFrame extends React.Component {
+  constructor(props) {
+    super(props);
+
+    this.state = {
+      hover: false
+    };
+  }
+  adjustScrollPane(node) {
+    if (!this.props.highlight) {
+      return;
+    }
+
+    var highlightBounds = this.props.highlight;
+
+    var top = highlightBounds.top;
+    var height = highlightBounds.height;
+    if ((top + height) > node.offsetHeight) {
+      var scrollTop = top + (height/2) - (node.offsetHeight / 2);
+      node.scrollTop = scrollTop;
+    }
+  }
+
+  render() {
+    var p = this.props;
+    var t = this;
+    var zoom = 0.25;
+    return e(
+      'div',
+      {
+        style: {
+          cursor: 'pointer',
+          position: 'absolute',
+          left: (100 * p.elapsedMs / p.totalMs) + '%',
+          width: (100 * p.durationMs / p.totalMs) + '%',
+          height: p.height,
+          overflow: 'hidden',
+          opacity: this.state.hover ? 1 : 0.6,
+          // padding: '1em',
+        },
+        onClick: p.onClick,
+        onMouseOver: function() { t.setState({hover: true}); },
+        onMouseOut: function() { t.setState({hover: false}); }
+      },
+      e(
+        'span',
+        {
+          ref: function(scrollPane) { scrollPane && t.adjustScrollPane(scrollPane); },
+          style: {
+            display: 'inline-block',
+            position: 'relative',
+            overflow: 'hidden',
+            userSelect: 'none',
+            width: p.width,
+            height: p.height,
+            transform: 'scale(' + zoom + ')',
+            transformOrigin: 'top left'
+          }
+        },
+        e(SnapshotImage, {src: p.image, width: p.imageWidth, height: p.imageHeight}),
+        p.highlight === null ? null : e(SnapshotHighlight, {bounds: p.highlight})
+      )
+    );
+  }
+}
+
+// class SessionTrack extends React.Component {
+//   render() {
+//     var p = this.props;
+//
+//     return e(
+//       SessionFrame,
+//       {
+//         key: index,
+//         width: p.width,
+//         height: p.height,
+//         zoom: t.state.zoom,
+//         image: snapshot.src,
+//         imageWidth: snapshot.width,
+//         imageHeight: snapshot.height,
+//         highlight: snapshot.node,
+//         networkRequests: snapshot.networkRequests,
+//         time: snapshotTime,
+//         event: snapshot.event,
+//         elapsedMs: elapsedMs,
+//         durationMs: durationMs,
+//         totalMs: totalTime
+//       });
+//   }
+// }
+
+class SessionTrack extends React.Component {
+  render() {
+    var t = this;
+    var p = this.props;
+
+    var startTime = Date.parse(p.timestamp);
+    var lastImageIx = p.snapshots.length - 1;
+    var totalTime = Date.parse(p.snapshots[lastImageIx].timestamp) - startTime
+
+    var numSnapshots = p.snapshots.length;
+
+    var prevTime = startTime;
+    var snapshotChildren = p.snapshots.map(function(snapshot, index) {
+      var snapshotTime = Date.parse(snapshot.timestamp);
+      var durationMs = snapshotTime - prevTime;
+      var elapsedMs = prevTime - startTime;
+      prevTime = snapshotTime;
+
+      return e(
+        SessionFrame,
+        {
+          key: index,
+          width: p.width,
+          height: p.height,
+          image: snapshot.src,
+          imageWidth: snapshot.width,
+          imageHeight: snapshot.height,
+          highlight: snapshot.node,
+          networkRequests: snapshot.networkRequests,
+          time: snapshotTime,
+          event: snapshot.event,
+
+          elapsedMs: index,
+          duration: 1,
+          totalMs: numSnapshots,
+
+          // elapsedMs: elapsedMs,
+          // durationMs: durationMs,
+          // totalMs: totalTime,
+
+          onClick: function() {
+            p.onClick(snapshot);
+          }
+        }
+      );
+    });
+
+    return e(
+      'div',
+      {
+        style: {
+          width: '100vw',
+          height: p.height
+        }
+      },
+      snapshotChildren
+    );
+  }
+}
+
+class TestAuditTimeline extends React.Component {
+  constructor(props) {
+    super(props);
+
+    this.state = {
+      selectedSnapshot: props.sessions[0].snapshots[0],
+      selectedSession: props.sessions[0]
+    };
+  }
+
+  render() {
+    var p = this.props;
+    var s = this.state;
+    var t = this;
+
+    return e(
+      'div',
+      null,
+      e('div', null, p.label),
+      e('div', null, `${p.file}:${p.line}`),
+      e(
+        Monitor,
+        {
+          initialZoom: 1,
+          width: s.selectedSession.width,
+          height: s.selectedSession.height,
+          snapshot: s.selectedSnapshot,
+        }
+      ),
+      e(
+        'div',
+        null,
+        this.props.sessions.map(function(session, index) {
+          return e(
+            SessionTrack,
+            {
+              key: index,
+              timestamp: p.timestamp,
+              deviceLabel: session.deviceLabel,
+              width: session.width,
+              height: session.height,
+              snapshots: session.snapshots,
+              onClick: function(snapshot) {
+                t.setState({
+                  selectedSnapshot: snapshot,
+                  selectedSession: session
+                });
+              }
+            });
+        })
+      )
+    );
+  }
+}
+
+class SessionEvent extends React.Component {
+  constructor(props) {
+    super(props);
+
+    this.state = {
+      hover: false
+    };
+  }
+
+  scrollIntoViewIfNeeded() {
+    if (!this.node) {
+      return;
+    }
+
+    this.node.scrollIntoViewIfNeeded();
+  }
+
+  render() {
+    var t = this;
+    var s = t.state;
+    var p = t.props;
+    var snapshot = p.snapshot;
+
+    return e(
+      'div',
+      {
+        onMouseOver: function() {
+          t.setState({hover: true});
+        },
+        onMouseOut: function() {
+          t.setState({hover: false});
+        },
+        onClick: p.onClick,
+        style: {
+          padding: '0 1em',
+        }
+      },
+      e(
+        'div',
+        {
+          style: {
+            padding: '0.5rem 0',
+          }
+        },
+        e(
+          'div',
+          {
+            ref: function(node) { t.node = node; },
+            style: {
+              backgroundColor: p.backgroundColor,
+              color: p.color,
+              opacity: s.hover ? 1 : 0.8,
+              padding: '0.5rem',
+              marginRight: '1em',
+            }
+          },
+          e(
+            'img',
+            {
+              width: 24,
+              height: 24,
+              src: snapshot.event === "visit" ?
+                "data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjMDAwMDAwIiBoZWlnaHQ9IjI0IiB2aWV3Qm94PSIwIDAgMjQgMjQiIHdpZHRoPSIyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICAgIDxwYXRoIGQ9Ik0wIDBoMjR2MjRIMFYweiIgZmlsbD0ibm9uZSIvPgogICAgPHBhdGggZD0iTTIxIDNMMyAxMC41M3YuOThsNi44NCAyLjY1TDEyLjQ4IDIxaC45OEwyMSAzeiIvPgo8L3N2Zz4=" :
+                  (snapshot.event === "click" || snapshot.event === "trigger") ?
+                    "data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjMDAwMDAwIiBoZWlnaHQ9IjI0IiB2aWV3Qm94PSIwIDAgMjQgMjQiIHdpZHRoPSIyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICAgIDxwYXRoIGQ9Ik0wIDBoMjR2MjRIMHoiIGZpbGw9Im5vbmUiLz4KICAgIDxwYXRoIGQ9Ik0xMyAxLjA3VjloN2MwLTQuMDgtMy4wNS03LjQ0LTctNy45M3pNNCAxNWMwIDQuNDIgMy41OCA4IDggOHM4LTMuNTggOC04di00SDR2NHptNy0xMy45M0M3LjA1IDEuNTYgNCA0LjkyIDQgOWg3VjEuMDd6Ii8+Cjwvc3ZnPg==" :
+                    "data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjMDAwMDAwIiBoZWlnaHQ9IjI0IiB2aWV3Qm94PSIwIDAgMjQgMjQiIHdpZHRoPSIyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICAgIDxwYXRoIGQ9Ik0yMCA1SDRjLTEuMSAwLTEuOTkuOS0xLjk5IDJMMiAxN2MwIDEuMS45IDIgMiAyaDE2YzEuMSAwIDItLjkgMi0yVjdjMC0xLjEtLjktMi0yLTJ6bS05IDNoMnYyaC0yVjh6bTAgM2gydjJoLTJ2LTJ6TTggOGgydjJIOFY4em0wIDNoMnYySDh2LTJ6bS0xIDJINXYtMmgydjJ6bTAtM0g1VjhoMnYyem05IDdIOHYtMmg4djJ6bTAtNGgtMnYtMmgydjJ6bTAtM2gtMlY4aDJ2MnptMyAzaC0ydi0yaDJ2MnptMC0zaC0yVjhoMnYyeiIvPgogICAgPHBhdGggZD0iTTAgMGgyNHYyNEgwem0wIDBoMjR2MjRIMHoiIGZpbGw9Im5vbmUiLz4KPC9zdmc+",
+              style: {
+                verticalAlign: 'middle',
+                marginRight: '1em',
+                display: 'inline'
+              }
+            }
+          ),
+          snapshot.event
+        )
+      )
+    );
+  }
+}
+
+class SessionEpisode extends React.Component {
+  render() {
+    var p = this.props;
+    return e(
+      'div',
+      {
+        style: {
+          backgroundColor: p.backgroundColor,
+          color: p.color,
+          position: 'relative',
+          fontSize: '80%',
+          padding: '1rem 0'
+        }
+      },
+      e(
+        'div',
+        {
+          style: {
+            position: 'sticky',
+            zIndex: 1,
+            backgroundColor: p.backgroundColor,
+            top: 0,
+            padding: '1rem 1rem'
+          },
+          onClick: function(e) {
+            if (!p.selectedSnapshot) {
+              p.onSelectSnapshot(p.snapshots[0]);
+            }
+          }
+        },
+        p.label
+      ),
+      p.snapshots.map(function(snapshot, index) {
+        var selected = (p.selectedSnapshot === snapshot);
+
+        return e(
+          SessionEvent,
+          {
+            key: index,
+            ref: function(node) {
+              if (!node) {
+                return;
+              }
+
+              if (!selected) {
+                return;
+              }
+
+              node.scrollIntoViewIfNeeded();
+            },
+            onClick: function(e) {
+              p.onSelectSnapshot(snapshot);
+              e.stopPropagation();
+            },
+            backgroundColor: selected ?
+                p.snapshotSelectedBackgroundColor : p.snapshotBackgroundColor,
+            color: selected ?
+                p.snapshotSelectedForegroundColor : p.snapshotForegroundColor,
+            snapshot: snapshot
+          }
+        );
+      })
+    );
+  }
+}
+
+class TestJournal extends React.Component {
+  render() {
+    var p = this.props;
+
+    var sessionId = p.snapshots[0]["sessionId"];
+    var episodes = [];
+    var episodeSnapshots = [];
+    var selectedSnapshotPresent = false;
+
+    var visitSnapshot = function(snapshot) {
+      if (snapshot["sessionId"] !== sessionId) {
+        var episode = e(
+          SessionEpisode,
+          {
+            key: episodes.length,
+            label: episodeSnapshots[0]["deviceLabel"],
+            backgroundColor: selectedSnapshotPresent ?
+                p.episodeSelectedBackgroundColor : p.episodeBackgroundColor,
+            color: selectedSnapshotPresent ?
+                p.episodeSelectedForegroundColor : p.episodeForegroundColor,
+            snapshotBackgroundColor: p.snapshotBackgroundColor,
+            snapshotForegroundColor: p.snapshotForegroundColor,
+            snapshotSelectedBackgroundColor: p.snapshotSelectedBackgroundColor,
+            snapshotSelectedForegroundColor: p.snapshotSelectedForegroundColor,
+            onSelectSnapshot: p.onSelectSnapshot,
+            snapshots: episodeSnapshots,
+            selectedSnapshot: selectedSnapshotPresent ? p.selectedSnapshot : null
+          });
+
+        episodes.push(episode);
+        episodeSnapshots = [];
+        selectedSnapshotPresent = false;
+        sessionId = snapshot["sessionId"];
+      }
+
+      if (snapshot === p.selectedSnapshot) {
+        selectedSnapshotPresent = true;
+      }
+      episodeSnapshots.push(snapshot);
+    };
+
+    p.snapshots.forEach(visitSnapshot);
+    visitSnapshot({});
+
+    return e(
+      'div',
+      {
+        onMouseDown: function(e) {
+          return e.preventDefault();
+        },
+        style: {
+          backgroundColor: p.backgroundColor,
+          position: 'absolute',
+          zIndex: 0,
+          top: 0,
+          left: 0,
+          bottom: 0,
+          right: 0,
+          overflow: 'scroll'
+        }
+      },
+      episodes
+    );
+  }
+}
+
+class TestTimelineStatistics extends React.Component {
+  render() {
+    return e(
+      'div',
+      {
+        style: {
+          backgroundColor: 'lightred',
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          bottom: 0,
+          right: 0
+        }
+      },
+      'timeline statistics'
+    );
+  }
+}
+
+
+class AbsoluteDot extends React.Component {
+  render() {
+    var p = this.props;
+    return e(
+      'div',
+      {
+        style: {
+          backgroundColor: p.color,
+          borderRadius: '50%',
+          position: 'absolute',
+          top: p.centerY,
+          left: p.centerX,
+          transform: 'translateX(-' + p.radius + 'px) translateY(-' + p.radius + 'px)',
+          width: p.radius * 2,
+          height: p.radius * 2
+        }
+      }
+    );
+  }
+}
+
+class TestTimelineTrack extends React.Component {
+  constructor(props) {
+    super(props);
+
+    this.dragHook = this.mouseMovedDuringDrag.bind(this);
+    this.dragFinishHook = this.finishDrag.bind(this);
+
+    this.keyHook = this.keyPressed.bind(this);
+
+    this.state = {
+      position: this.findPositionForSnapshot(props.selectedSnapshot)
+    };
+  }
+
+  findSnapshotForPosition(position) {
+    var p = this.props;
+    var fraction = 0;
+    return p.snapshots.find(function(snapshot, index) {
+      if (position <= fraction) {
+        return true;
+      }
+
+      var duration = 1 / p.snapshots.length;
+      fraction += duration;
+      if (position < fraction || (index === p.snapshots.length - 1)) {
+        return true;
+      }
+
+      return false;
+    });
+  }
+
+  findIndexForSnapshot(s) {
+    return this.props.snapshots.findIndex(function(snapshot) {
+      return s === snapshot;
+    });
+  }
+
+  findSnapshotForIndex(index) {
+    if (index < 0) {
+      index = 0;
+    }
+
+    var snapshots = this.props.snapshots;
+    if (index >= snapshots.length) {
+      index = snapshots.length - 1;
+    }
+
+    return snapshots[index];
+  }
+
+  findPositionForSnapshot(s) {
+    var p = this.props;
+    var position = 0;
+
+    p.snapshots.find(function(snapshot, index) {
+      if (s === snapshot) {
+        return true;
+      }
+
+      var duration = 1 / p.snapshots.length;
+      position += duration;
+    });
+
+    return position;
+  }
+
+  componentWillReceiveProps(props) {
+    if (props.selectedSnapshot !== this.props.selectedSnapshot) {
+      if (this.findSnapshotForPosition(this.state.position) !== props.selectedSnapshot) {
+        var position = this.findPositionForSnapshot(props.selectedSnapshot);
+        this.setPosition(position);
+      }
+    }
+  }
+
+  setPosition(value) {
+    if (value === this.state.position) {
+      return;
+    }
+
+    var t = this;
+    this.setState(
+      {position: value},
+      this.props.onSelectSnapshot ?
+        function() {
+          t.props.onSelectSnapshot(t.findSnapshotForPosition(t.state.position));
+        } :
+        null
+    );
+
+    return value;
+  }
+
+  startDrag(e, initialPosition) {
+    if (!this.node) {
+      return;
+    }
+
+    var nodeBounds = this.node.getBoundingClientRect();
+    var minX = nodeBounds.left;
+    var maxX = minX + nodeBounds.width;
+
+    this.setState({
+      initialClientX: e.clientX,
+      minX: minX,
+      maxX: maxX,
+      initialPosition: initialPosition
+    });
+
+    document.body.addEventListener('mousemove', this.dragHook);
+    document.body.addEventListener('mouseup', this.dragFinishHook);
+  }
+
+  finishDrag() {
+    document.body.removeEventListener('mousemove', this.dragHook);
+    document.body.removeEventListener('mouseup', this.dragFinishHook);
+  }
+
+  mouseMovedDuringDrag(e) {
+    var s = this.state;
+    var position = s.initialPosition + ((e.clientX - s.initialClientX) / (s.maxX - s.minX));
+
+    if (position < 0) {
+      position = 0;
+    }
+
+    if (position > 1) {
+      position = 1;
+    }
+
+    this.setPosition(position);
+  }
+
+  keyPressed(e) {
+    switch (e.which) {
+    case 40: // down
+    case 39: // right
+      this.setPosition(
+        this.findPositionForSnapshot(
+          this.findSnapshotForIndex(
+            this.findIndexForSnapshot(this.props.selectedSnapshot) + 1)));
+      break;
+    case 38: // up
+    case 37: // left
+      this.setPosition(
+        this.findPositionForSnapshot(
+          this.findSnapshotForIndex(
+            this.findIndexForSnapshot(this.props.selectedSnapshot) - 1)));
+      break;
+    }
+  }
+
+  componentDidMount() {
+    document.addEventListener('keydown', this.keyHook);
+  }
+
+  componentWillUnmount() {
+    document.removeEventListener('keydown', this.keyHook);
+  }
+
+  render() {
+    var t = this;
+    var p = t.props;
+    var s = t.state;
+
+    return e(
+      'div',
+      {
+        ref: function(node) { t.node = node; },
+        onMouseDown: function(e) {
+          if (!t.node) {
+            return;
+          }
+
+          var nodeBounds = t.node.getBoundingClientRect();
+          var position = t.setPosition((e.clientX - nodeBounds.left) / nodeBounds.width);
+
+          t.startDrag(e, position);
+          e.stopPropagation();
+          e.preventDefault();
+        },
+        draggable: false,
+        style: {
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          bottom: 0,
+          right: 0,
+        }
+      },
+      e(
+        'div',
+        {
+          style: {
+            backgroundColor: p.color,
+            position: 'absolute',
+            left: 0,
+            width: (s.position * 100) + '%',
+            height: p.strokeWidth,
+            transform: 'translateY(-' + (p.strokeWidth/2) + 'px)',
+            top: '50%'
+          }
+        }
+      ),
+      e(
+        'div',
+        {
+          style: {
+            backgroundColor: '#eee',
+            position: 'absolute',
+            right: 0,
+            width: ((1 - s.position) * 100) + '%',
+            height: p.strokeWidth,
+            transform: 'translateY(-' + (p.strokeWidth/2) + 'px)',
+            top: '50%'
+          }
+        }
+      ),
+      p.snapshots.map(function(snapshot, index) {
+        return e(
+          'div',
+          {
+            key: index,
+          },
+          e(
+            AbsoluteDot,
+            {
+              color: 'white',
+              centerX: (100 * index / p.snapshots.length) + '%',
+              radius: p.eventRadius + 1,
+              centerY: '50%'
+            }
+          ),
+          e(
+            AbsoluteDot,
+            {
+              color: p.color,
+              centerX: (100 * index / p.snapshots.length) + '%',
+              radius: p.eventRadius,
+              centerY: '50%'
+            }
+          )
+        );
+      }),
+      e(
+        AbsoluteDot,
+        {
+          color: p.color,
+          centerX: (s.position * 100) + '%',
+          centerY: '50%',
+          radius: p.scrubberRadius,
+        }
+      )
+    );
+  }
+}
+
+TestTimelineTrack.defaultProps = {
+  scrubberRadius: 7,
+  eventRadius: 1,
+  strokeWidth: 2
+}
+
+class TestTimeline extends React.Component {
+  constructor(props) {
+    super(props);
+
+    this.state = {
+      playing: false
+    };
+  }
+
+  play() {
+    this.setState({playing: true});
+  }
+
+  pause() {
+    this.setState({playing: false});
+  }
+
+  render() {
+    var t = this;
+    var s = t.state;
+    var p = t.props;
+
+    return e(
+      'div',
+      null,
+      e(
+        'div',
+        {
+          style: {
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            height: 50
+          }
+        },
+        e(
+          TestTimelineTrack,
+          {
+            color: p.color,
+            onSelectSnapshot: p.onSelectSnapshot,
+            selectedSnapshot: p.selectedSnapshot,
+            snapshots: p.snapshots,
+            totalMs: p.totalMs
+          }
+        )
+      ),
+      e(
+        'div',
+        {
+          style: {
+            userSelect: 'none',
+            cursor: 'pointer',
+            color: p.color,
+            position: 'absolute',
+            left: 30,
+            bottom: 30,
+            fontSize: 30
+          },
+          onClick: function() {
+            s.playing ? t.pause() : t.play();
+          }
+        },
+        s.playing ? '\u275a\u275a' : '\u25b6'
+      )
+    );
+  }
+}
+
+TestTimeline.defaultProps = {
+  color: 'lightblue'
+};
+
+
+class TestMonitor extends React.Component {
+  constructor(props) {
+    super(props);
+
+    this.state = {
+      zoom: props.initialZoom
+    };
+  }
+
+  adjustScrollPane(node) {
+    var snapshot = this.props.snapshot;
+    if (!snapshot || !snapshot.node) {
+      return;
+    }
+
+    var highlightBounds = snapshot.node;
+
+    var top = highlightBounds.top;
+    var height = highlightBounds.height;
+
+    if ((top + height) > snapshot.deviceHeight) {
+      var scrollTop = top + (height/2) - (snapshot.deviceHeight / 2);
+      node.scrollTop = scrollTop;
+    } else {
+      node.scrollTop = 0;
+    }
+  }
+
+  render() {
+    var t = this;
+    var p = t.props;
+    var s = t.state;
+    var snapshot = p.snapshot;
+
+    return e(
+      'div',
+      {
+        style: {
+          position: 'absolute',
+          overflow: 'hidden',
+          top: 0,
+          left: 0,
+          bottom: 0,
+          right: 0,
+        }
+      },
+      e(
+        'div',
+        {
+          style: {
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            paddingBottom: 10,
+            paddingTop: 10,
+            backgroundColor: 'white',
+            textAlign: 'center',
+          }
+        },
+        e('span', null, snapshot.deviceLabel),
+        '\u00a0\u00a0\u00a0',
+        e('span', null, `${snapshot.deviceWidth} x ${snapshot.deviceHeight}`),
+        e('span', {style: {opacity: 0.5}}, " px"),
+        '\u00a0\u00a0\u00a0',
+        e(
+          ZoomControl,
+          {
+            initialValue: p.initialZoom,
+            onValue: function(value) { t.setState({zoom: value}); }
+          }
+        )
+      ),
+      e(
+        'div',
+        {
+          style: {
+            position: 'relative',
+            userSelect: 'none',
+            width: snapshot.deviceWidth,
+            height: snapshot.deviceHeight,
+            left: '50%',
+            top: '50%',
+            transform: 'scale(' + s.zoom + ') translateX(-' + (snapshot.deviceWidth / 2) + 'px) translateY(-' + (snapshot.deviceHeight/2) + 'px)',
+            transformOrigin: 'top left'
+          }
+        },
+        e(DeviceSilhouette, {scale: 3, type: snapshot["deviceType"]}),
+        e(
+          'div',
+          {
+            ref: function(scrollPane) { scrollPane && t.adjustScrollPane(scrollPane); },
+            style: {
+              position: 'relative',
+              overflow: 'scroll',
+              width: snapshot.deviceWidth,
+              height: snapshot.deviceHeight,
+            }
+          },
+          e(
+            SnapshotImage,
+            {
+              key: `${snapshot.sessionId} ${snapshot.height}`,
+              src: snapshot.src,
+              width: snapshot.width,
+              height: snapshot.height
+            }
+          ),
+          snapshot.node === null ? null : e(SnapshotHighlight, {bounds: snapshot.node})
+        )
+      )
+    );
+  }
+}
+
+class TestReplay extends React.Component {
+  constructor(props) {
+    super(props);
+
+    console.log(props)
+    this.state = {
+      selectedSnapshot: props.initialSnapshot || props.snapshots[0]
+    };
+  }
+
+  render() {
+    var t = this;
+    var p = t.props;
+    var s = t.state;
+
+    var snapshots = p.snapshots;
+
+    return e(
+      'div',
+      {
+        style: {
+          display: 'flex',
+          height: '100vh'
+        }
+      },
+      e(
+        'div',
+        {
+          style: {
+            flex: '1 100%',
+            flexDirection: 'column',
+            display: 'flex',
+          }
+        },
+        e(
+          'div',
+          {
+            style: {
+              flex: '2 100%',
+              position: 'relative'
+            }
+          },
+          e(
+            TestMonitor,
+            {
+              snapshot: s.selectedSnapshot,
+              initialZoom: 1
+            }
+          )
+        ),
+        e(
+          'div',
+          {
+            style: {
+              flex: '1 150px',
+              position: 'relative'
+            }
+          },
+          e(
+            TestTimeline,
+            {
+              onSelectSnapshot: function(snapshot) {
+                t.setState({selectedSnapshot: snapshot});
+              },
+              selectedSnapshot: s.selectedSnapshot,
+              snapshots: snapshots,
+              totalMs: snapshots.length
+            }
+          )
+        )
+      ),
+      e(
+        'div',
+        {
+          style: {
+            flex: '2 25%',
+            position: 'relative',
+            boxShadow: '0 6px 10px 0 rgba(0,0,0,.14), 0 1px 18px 0 rgba(0,0,0,.12), 0 3px 5px -1px rgba(0,0,0,.2)',
+          }
+        },
+        e(
+          TestJournal,
+          {
+            snapshots: snapshots,
+            backgroundColor: '#ccc',
+            episodeSelectedBackgroundColor: '#ddd',
+            episodeSelectedForegroundColor: '#888',
+            episodeBackgroundColor: '#fff',
+            episodeForegroundColor: '#888',
+            snapshotBackgroundColor: '#fff',
+            snapshotForegroundColor: '#888',
+            snapshotSelectedBackgroundColor: 'lightblue',
+            snapshotSelectedForegroundColor: '#888',
+            selectedSnapshot: s.selectedSnapshot,
+            onSelectSnapshot: function(s) {
+              t.setState({selectedSnapshot: s});
+            }
+          }
+        )
+      )
+    );
+  }
+}
+
+class ActionButton extends React.Component {
+  constructor(props) {
+    super(props);
+
+    this.state = {
+      hover: false,
+      active: false
+    };
+  }
+
+  render() {
+    var t = this;
+    var s = t.state;
+    var p = t.props;
+
+    return e(
+      'span',
+      {
+        style: {
+          position: 'relative',
+          verticalAlign: 'middle',
+          borderRadius: 1,
+          userSelect: 'none',
+          backgroundColor: s.hover ? 'rgba(0, 0, 0, 0.02)' : 'transparent',
+          boxShadow: s.active ?
+              '0 0px 0px 0 rgba(0, 0, 0, 0.1), 0 4px 8px 0 rgba(0, 0, 0, 0.2)' :
+              (s.hover ? '0 0px 0px 0 rgba(0, 0, 0, 0.1), 0 2px 4px 0 rgba(0, 0, 0, 0.2)' : ''),
+          transform: s.active ? 'scale(1.03)' : '',
+          cursor: 'pointer',
+          display: 'inline-block',
+          textTransform: 'uppercase',
+          margin: p.margin,
+          padding: p.padding,
+          fontSize: '80%',
+          fontWeight: 600,
+        },
+        onClick: p.onClick,
+        onMouseDown: function() {
+          t.setState({active: true});
+        },
+        onMouseUp: function() {
+          t.setState({active: false});
+        },
+        onMouseOver: function(e) {
+          t.setState({hover: true, active: (e.buttons & 1) === 1});
+        },
+        onMouseOut: function() {
+          t.setState({hover: false, active: false});
+        }
+      },
+      p.children
+    )
+  }
+}
+
+ActionButton.defaultProps = {
+  padding: '1em',
+};
+
+class DeviceSilhouette extends React.Component {
+  render() {
+    var t = this;
+    var p = t.props;
+
+    var scale = p.scale || 1;
+
+    var styles = {
+      laptop: {
+        pointerEvents: 'none',
+        borderImageSource: "url('data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9Im5vIj8+Cjxzdmcgd2lkdGg9IjIwMnB4IiBoZWlnaHQ9IjEyMnB4IiB2aWV3Qm94PSIwIDAgMjAyIDEyMiIgdmVyc2lvbj0iMS4xIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB4bWxuczpza2V0Y2g9Imh0dHA6Ly93d3cuYm9oZW1pYW5jb2RpbmcuY29tL3NrZXRjaC9ucyI+CiAgICA8IS0tIEdlbmVyYXRvcjogU2tldGNoIDMuNC4yICgxNTg1NSkgLSBodHRwOi8vd3d3LmJvaGVtaWFuY29kaW5nLmNvbS9za2V0Y2ggLS0+CiAgICA8dGl0bGU+U2xpY2UgMTwvdGl0bGU+CiAgICA8ZGVzYz5DcmVhdGVkIHdpdGggU2tldGNoLjwvZGVzYz4KICAgIDxkZWZzPjwvZGVmcz4KICAgIDxnIGlkPSJQYWdlLTEiIHN0cm9rZT0ibm9uZSIgc3Ryb2tlLXdpZHRoPSIxIiBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiIHNrZXRjaDp0eXBlPSJNU1BhZ2UiPgogICAgICAgIDxnIGlkPSJsYXB0b3AiIHNrZXRjaDp0eXBlPSJNU0xheWVyR3JvdXAiPgogICAgICAgICAgICA8cGF0aCBkPSJNMTc2Ljc5MjU4LDAgTDI1LjIwNzQxOTksMCBDMTcuOTAzMzE2NSwwIDEyLDYuMDA3MjcyNzMgMTIsMTMuNDQgTDEyLDExMiBMMTkwLDExMiBMMTkwLDEzLjQ0IEMxOTAsNi4wMDcyNzI3MyAxODQuMTk2NzQsMCAxNzYuNzkyNTgsMCBMMTc2Ljc5MjU4LDAgWiBNMTgwLDEwMCBMMjIsMTAwIEwyMiwxMiBMMTgwLDEyIEwxODAsMTAwIEwxODAsMTAwIFoiIGlkPSJTaGFwZSIgZmlsbD0iIzQ0NDQ0NCIgc2tldGNoOnR5cGU9Ik1TU2hhcGVHcm91cCI+PC9wYXRoPgogICAgICAgICAgICA8cGF0aCBkPSJNMTkyLjUsMTIyIEw5LjUsMTIyIEM0LjIsMTIyIDAsMTE3LjQzMzYyOCAwLDExMS45MTE1MDQgTDAsMTExLjkxMTUwNCBDMCwxMTAuODQ5NTU4IDAuOCwxMTAgMS44LDExMCBMMjAwLjIsMTEwIEMyMDEuMiwxMTAgMjAyLDExMC44NDk1NTggMjAyLDExMS45MTE1MDQgTDIwMiwxMTEuOTExNTA0IEMyMDIsMTE3LjUzOTgyMyAxOTcuNywxMjIgMTkyLjUsMTIyIEwxOTIuNSwxMjIgWiIgaWQ9IlNoYXBlIiBmaWxsPSIjOTk5OTk5IiBza2V0Y2g6dHlwZT0iTVNTaGFwZUdyb3VwIj48L3BhdGg+CiAgICAgICAgPC9nPgogICAgPC9nPgo8L3N2Zz4=')",
+        borderImageSlice: '12 22 22 22',
+        borderStyle: 'solid',
+        borderWidth: `${12 * scale}px ${scale * 22}px ${scale * 22}px`,
+        position: 'absolute',
+        top: scale * -12 * 1.03,
+        bottom: scale * -22 * 1.03,
+        left: scale * -22 * 1.03,
+        right: scale * -22 * 1.03,
+      },
+      mobile: {
+        pointerEvents: 'none',
+        borderImageSource: "url('data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9Im5vIj8+Cjxzdmcgd2lkdGg9IjExMnB4IiBoZWlnaHQ9IjIwMHB4IiB2aWV3Qm94PSIwIDAgMTEyIDIwMCIgdmVyc2lvbj0iMS4xIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB4bWxuczpza2V0Y2g9Imh0dHA6Ly93d3cuYm9oZW1pYW5jb2RpbmcuY29tL3NrZXRjaC9ucyI+CiAgICA8IS0tIEdlbmVyYXRvcjogU2tldGNoIDMuNC4yICgxNTg1NSkgLSBodHRwOi8vd3d3LmJvaGVtaWFuY29kaW5nLmNvbS9za2V0Y2ggLS0+CiAgICA8dGl0bGU+bW9iaWxlPC90aXRsZT4KICAgIDxkZXNjPkNyZWF0ZWQgd2l0aCBTa2V0Y2guPC9kZXNjPgogICAgPGRlZnM+PC9kZWZzPgogICAgPGcgaWQ9IlBhZ2UtMSIgc3Ryb2tlPSJub25lIiBzdHJva2Utd2lkdGg9IjEiIGZpbGw9Im5vbmUiIGZpbGwtcnVsZT0iZXZlbm9kZCIgc2tldGNoOnR5cGU9Ik1TUGFnZSI+CiAgICAgICAgPGcgaWQ9Im1vYmlsZSIgc2tldGNoOnR5cGU9Ik1TTGF5ZXJHcm91cCIgZmlsbD0iIzQ0NDQ0NCI+CiAgICAgICAgICAgIDxwYXRoIGQ9Ik0xMS45LDAgQzQuMiwwIC0xLjQyMTA4NTQ3ZS0xNCw2LjIgLTEuNDIxMDg1NDdlLTE0LDEzLjkgTC0xLjQyMTA4NTQ3ZS0xNCwxODYuMSBDLTEuNDIxMDg1NDdlLTE0LDE5My44IDQuMiwyMDAgMTEuOSwyMDAgTDEwMC4xLDIwMCBDMTA3LjgsMjAwIDExMiwxOTMuOCAxMTIsMTg2LjEgTDExMiwxMy45IEMxMTIsNi4yIDEwNy44LDAgMTAwLjEsMCBMMTEuOSwwIFogTTEwNiwxODYgTDYsMTg2IEw2LDE0IEwxMDYsMTQgTDEwNiwxODYgTDEwNiwxODYgWiIgaWQ9IlNoYXBlIiBza2V0Y2g6dHlwZT0iTVNTaGFwZUdyb3VwIj48L3BhdGg+CiAgICAgICAgPC9nPgogICAgPC9nPgo8L3N2Zz4=')",
+        borderImageSlice: '14 6 14 6',
+        borderStyle: 'solid',
+        borderWidth: `${scale * 14}px ${scale * 6}px`,
+        position: 'absolute',
+        top: scale * -14,
+        bottom: scale * -14,
+        left: scale * -6,
+        right: scale * -6
+      }
+    };
+
+    return e('div', {style: styles[p.type]});
+  }
+}
+
+class TestSummary extends React.Component {
+  constructor(props) {
+    super(props);
+
+    this.state = {
+      showAll: false
+    };
+  }
+  adjustScrollPane(node) {
+    var snapshot = this.props.snapshot;
+    if (!snapshot || !snapshot.node) {
+      return;
+    }
+
+    var highlightBounds = snapshot.node;
+
+    var top = highlightBounds.top;
+    var height = highlightBounds.height;
+    if ((top + height) > node.offsetHeight) {
+      var scrollTop = top + (height/2) - (node.offsetHeight / 2);
+      node.scrollTop = scrollTop;
+    }
+  }
+
+  render() {
+    var t = this
+    var s = t.state;
+    var p = t.props;
+
+    var passed = p.outcome === "pass";
+    var label = p.label;
+
+    var indent = 10;
+    var hangingIndent = 30;
+    var thumbnailHeight = 150;
+    var thumbnailXMargin = thumbnailHeight * 0.1;
+    var thumbnailYMargin = thumbnailHeight * 0.2;
+
+    var maxWidth = s.showAll ? -1 : p.maxWidth;
+
+    var ellipsisWidth = thumbnailHeight;
+    var elided = 0;
+    var shownSnapshots = [];
+    var showDeviceBorders = [];
+    var previousSessionId;
+    var shownWidth = hangingIndent + -thumbnailXMargin + hangingIndent;
+
+    var finalSnapshotIx = p.snapshots.length - 1
+    var finalSnapshot = p.snapshots[finalSnapshotIx];
+    var finalSnapshotZoom = thumbnailHeight / finalSnapshot.deviceHeight;
+    var finalSnapshotWidth = 2 * thumbnailXMargin + (finalSnapshotZoom * finalSnapshot.deviceWidth);
+
+    p.snapshots.find(function(snapshot, index) {
+      if (index === finalSnapshotIx) {
+        elided = 1;
+        return false;
+      }
+
+      var zoom = thumbnailHeight / snapshot.deviceHeight;
+      var snapshotWidth = zoom * snapshot.deviceWidth;
+
+      if (maxWidth <= 0 || (shownWidth + thumbnailXMargin + snapshotWidth + thumbnailXMargin + ellipsisWidth + finalSnapshotWidth) <= maxWidth) {
+        shownWidth += thumbnailXMargin + snapshotWidth + thumbnailXMargin;
+        shownSnapshots.push(snapshot);
+        showDeviceBorders.push(previousSessionId !== snapshot["sessionId"]);
+        previousSessionId = snapshot["sessionId"];
+        return false;
+      }
+
+      shownWidth += thumbnailXMargin + ellipsisWidth;
+      elided = p.snapshots.length - index;
+      return true;
+    });
+
+    if (maxWidth > 0 && shownWidth + finalSnapshotWidth > maxWidth) {
+      finalSnapshot = null;
+    } else {
+      showDeviceBorders[finalSnapshotIx] = previousSessionId !== finalSnapshot["sessionId"];
+      --elided;
+    }
+
+    var renderSnapshot = function(snapshot, key) {
+      var zoom = thumbnailHeight / snapshot.deviceHeight;
+      return e(
+        ActionButton,
+        {
+          key: key,
+          padding: 0,
+          margin: `${thumbnailYMargin}px ${thumbnailXMargin}px`,
+          onClick: () => {
+            p.onReplay(snapshot);
+          }
+        },
+        e(
+          'div',
+          {
+            style: {
+              position: 'relative'
+            }
+          },
+          showDeviceBorders[key] ? e(DeviceSilhouette, {type: snapshot["deviceType"]}) : null,
+          e(
+            'div',
+            {
+              style: {
+                overflow: 'hidden',
+                position: 'relative',
+                width: snapshot.deviceWidth * zoom,
+                height: snapshot.deviceHeight * zoom,
+              }
+            },
+            e(
+              'div',
+              {
+                ref: function(scrollPane) { scrollPane && t.adjustScrollPane(scrollPane); },
+                style: {
+                  userSelect: 'none',
+                  width: snapshot.deviceWidth,
+                  height: snapshot.deviceHeight,
+                  transform: 'scale(' + zoom + ')',
+                  transformOrigin: 'top left'
+                }
+              },
+              e(
+                SnapshotImage,
+                {
+                  src: snapshot.src,
+                  width: snapshot.width,
+                  height: snapshot.height
+                }
+              ),
+              snapshot.node === null ? null : e(SnapshotHighlight, {bounds: snapshot.node})
+            )
+          )
+        )
+      )
+    };
+
+    return e(
+      'div',
+      {
+        style: {
+          padding: '1rem 0'
+        }
+      },
+      e(
+        'div',
+        null,
+        e(
+          'span',
+          {
+            style: {
+              display: 'inline-block',
+              color: passed ? 'green' : 'red',
+              paddingLeft: indent,
+              width: hangingIndent - indent
+            }
+          },
+          passed ? '\u2714' : '\u2718'
+        ),
+        label
+      ),
+      e(
+        'div',
+        {
+          style: {
+            paddingLeft: hangingIndent,
+          }
+        },
+        e(ActionButton, {onClick: () => { p.onReplay(null); }}, 'Replay'),
+        e(ActionButton, {onClick: () => { t.setState({showAll: !s.showAll})}}, s.showAll ? 'Collapse' : 'Show All')
+      ),
+      e(
+        'div',
+        {
+          style: {
+            paddingLeft: hangingIndent - thumbnailXMargin
+          }
+        },
+        shownSnapshots.map(renderSnapshot),
+        elided === 0 ? null :
+          e(
+            'span',
+            {
+              style: {
+                userSelect: 'none',
+                fontSize: '80%',
+                opacity: 0.6,
+                display: 'inline-block',
+                width: ellipsisWidth,
+                overflow: 'hidden',
+                textAlign: 'center',
+                verticalAlign: 'middle'
+              }
+            },
+            `${elided} more ...`
+          ),
+        finalSnapshot !== null ? renderSnapshot(finalSnapshot, finalSnapshotIx) : null
+      )
+    );
+  }
+}
+
+class SummaryMaster extends React.Component {
+  constructor(props) {
+    super(props);
+
+    this.keyDownHook = this.keyDown.bind(this);
+
+    this.state = {
+      replayTest: null,
+      replaySnapshots: null,
+      replayTestFromSnapshot: null,
+    };
+  }
+
+  componentDidMount() {
+    document.addEventListener('keydown', this.keyDownHook);
+  }
+
+  componentWillUnmount() {
+    document.removeEventListener('keydown', this.keyDownHook);
+  }
+
+  keyDown(e) {
+    switch (e.which) {
+    case 27: // escape
+      this.setState(
+        {
+          replayTest: null,
+          replaySnapshots: null,
+          replayTestFromSnapshot: null
+        }
+      );
+      break;
+    }
+  }
+
+  render() {
+    var t = this;
+    var p = t.props;
+    var s = t.state;
+
+    return e(
+      'div',
+      null,
+      // tests.map(function(test) { return e(TestAuditPoster, test); })
+      s.replayTest ?
+        e(TestReplay, {test: s.replayTest, snapshots: s.replaySnapshots, initialSnapshot: s.replayTestFromSnapshot}) :
+        p.tests.map(function(test, index) {
+          var startTime = Date.parse(test.timestamp);
+
+          var prevTime = startTime;
+
+          var snapshots = [];
+          test.sessions.forEach(function(session) {
+            session.snapshots.forEach(function(snapshot) {
+              var snapshotTime = Date.parse(snapshot.timestamp);
+              var durationMs = snapshotTime - prevTime;
+              var elapsedMs = prevTime - startTime;
+              prevTime = snapshotTime;
+
+              var cloned = JSON.parse(JSON.stringify(snapshot));
+
+              var deviceType;
+              switch (session["deviceLabel"]) {
+              case "Custom":
+              case "desktop":
+              case "laptop":
+                deviceType = 'laptop';
+                break;
+              default:
+                deviceType = 'mobile';
+              }
+              cloned["deviceType"] = deviceType;
+              cloned["deviceLabel"] = session["deviceLabel"];
+              cloned["deviceWidth"] = session["width"];
+              cloned["deviceHeight"] = session["height"];
+              cloned["sessionId"] = `${session["deviceLabel"]} ${session["width"]}x${session["height"]}`
+              cloned["elapsedMs"] = elapsedMs;
+              cloned["durationMs"] = durationMs;
+              snapshots.push(cloned);
+            });
+          });
+
+          snapshots.sort(function(a, b) {
+            if (a.elapsedMs < b.elapsedMs) {
+              return -1;
+            }
+
+            if (a.elapsedMs > b.elapsedMs) {
+              return 1;
+            }
+
+            return 0;
+          });
+
+          return e(
+            TestSummary,
+            {
+              key: index,
+              onReplay: function(snapshot) {
+                t.setState({replayTest: test, replaySnapshots: snapshots, replayTestFromSnapshot: snapshot || snapshots[0]});
+              },
+              maxWidth: window.innerWidth,
+              label: test.label,
+              outcome: test.outcome,
+              snapshots: snapshots
+            }
+          );
+        })
+    )
+  }
+}
+
+fetch('index.json').then(function (response) {
+  response.text().then(function(text) {
+    var tests = text.trim().split("\n").map(function(line) { return JSON.parse(line); });
+    ReactDOM.render(
+      e(SummaryMaster, {tests: tests}),
+      document.getElementById('root')
+    );
+  });
+});
+
+</script>
