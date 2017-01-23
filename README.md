@@ -1,1 +1,1 @@
-# auditng-capybara
+# auditing-capybara
